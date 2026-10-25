@@ -17,8 +17,6 @@ const input = z
     announcement: z.string().trim().max(200),
     isAcceptingOrders: z.boolean(),
     pausedMessage: z.string().trim().max(200),
-    freeShippingThreshold: z.coerce.number().min(0),
-    shippingFee: z.coerce.number().min(0),
     codEnabled: z.boolean(),
     onlinePaymentEnabled: z.boolean(),
     contactPhone: z.string().trim().max(20),
@@ -43,7 +41,7 @@ r.post('/upload-signature', ah(async (req, res) => {
     throw new HttpError(501, 'Image upload is not set up yet. Paste an image link instead, or add the Cloudinary keys');
   }
   const { kind } = parse(z.object({ kind: z.enum(['product', 'hero']).default('product') }), req.body);
-  const folder = `miras-heritage/${kind}`;
+  const folder = `sweet2kaaram/${kind}`;
   const timestamp = Math.floor(Date.now() / 1000);
   const signature = createHash('sha1').update(`folder=${folder}&timestamp=${timestamp}${c.apiSecret}`).digest('hex');
   res.json({ cloudName: c.cloudName, apiKey: c.apiKey, folder, timestamp, signature });

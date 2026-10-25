@@ -3,17 +3,19 @@ import { Product } from '../models/Product';
 import { Coupon } from '../models/Coupon';
 import { getSettings } from '../models/Setting';
 import { HttpError } from '../utils/http';
+import { calculateShipping } from './shipping';
 
 export interface QuoteInput {
   items: { productId: string; quantity: number }[];
   couponCode?: string;
+  deliveryState?: string;
 }
 
 /**
  * The server is the only source of truth for prices, stock and discounts.
- * Whatever the browser sends is limited to product ids, quantities and a coupon code.
+ * The browser may also provide a delivery state for a preview; order creation uses the saved address.
  */
-export async function buildQuote({ items, couponCode }: QuoteInput) {
+export async function buildQuote({ items, couponCode, deliveryState }: QuoteInput) {
   const wanted = new Map<string, number>();
   for (const it of items) wanted.set(it.productId, Math.min(20, (wanted.get(it.productId) ?? 0) + it.quantity));
 
@@ -36,7 +38,8 @@ export async function buildQuote({ items, couponCode }: QuoteInput) {
 
   const subtotal = lines.reduce((s, l) => s + l.product.price * l.quantity, 0);
   const settings = await getSettings();
-  const shippingFee = subtotal === 0 || subtotal >= settings.freeShippingThreshold ? 0 : settings.shippingFee;
+  const shipping = deliveryState ? calculateShipping(subtotal, deliveryState) : null;
+  const shippingFee = shipping?.fee ?? null;
 
   let discount = 0;
   let coupon: any = null;
@@ -58,7 +61,8 @@ export async function buildQuote({ items, couponCode }: QuoteInput) {
 
   return {
     lines, problems, coupon, couponError, subtotal, discount, shippingFee,
-    total: subtotal - discount + shippingFee,
+    shippingThreshold: shipping?.threshold ?? null,
+    total: shippingFee === null ? null : subtotal - discount + shippingFee,
     settings,
   };
 }

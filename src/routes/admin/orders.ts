@@ -73,4 +73,10 @@ r.patch('/:id', ah(async (req, res) => {
   res.json(o);
 }));
 
+r.delete('/:id', ah(async (req, res) => {
+  const result = await Order.deleteOne({ _id: objectId(req.params.id, 'Order') });
+  if (result.deletedCount === 0) throw new HttpError(404, 'Order not found');
+  res.json({ deleted: true });
+}));
+
 export default r;

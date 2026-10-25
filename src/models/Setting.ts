@@ -3,13 +3,11 @@ import { Schema, model } from 'mongoose';
 const settingSchema = new Schema(
   {
     key: { type: String, default: 'main', unique: true },
-    storeName: { type: String, default: 'Miras Heritage Foods' },
-    tagline: { type: String, default: 'Authentic regional Indian delicacies' },
+    storeName: { type: String, default: 'Sweet2Kaaram' },
+    tagline: { type: String, default: 'The Soul of Native Taste' },
     announcement: { type: String, default: '' }, // shown in the top ribbon
     isAcceptingOrders: { type: Boolean, default: true },
     pausedMessage: { type: String, default: 'We are not taking new orders right now. Please check back soon.' },
-    freeShippingThreshold: { type: Number, default: 699, min: 0 },
-    shippingFee: { type: Number, default: 80, min: 0 },
     codEnabled: { type: Boolean, default: true },
     onlinePaymentEnabled: { type: Boolean, default: false }, // flip on when a gateway is connected
     contactPhone: { type: String, default: '' },
@@ -27,12 +25,27 @@ export const Setting = model('Setting', settingSchema);
 
 const PUBLIC_FIELDS = [
   'storeName', 'tagline', 'announcement', 'isAcceptingOrders', 'pausedMessage',
-  'freeShippingThreshold', 'shippingFee', 'codEnabled', 'onlinePaymentEnabled',
+  'codEnabled', 'onlinePaymentEnabled',
   'contactPhone', 'contactEmail', 'whatsapp', 'address', 'heroImage', 'heroTitle', 'heroSubtitle',
 ] as const;
 
 export async function getSettings() {
-  return Setting.findOneAndUpdate({ key: 'main' }, { $setOnInsert: { key: 'main' } }, { upsert: true, new: true });
+  const settings = await Setting.findOneAndUpdate(
+    { key: 'main' },
+    { $setOnInsert: { key: 'main' } },
+    { upsert: true, new: true }
+  );
+  let changed = false;
+  if (settings.storeName === 'Miras Heritage Foods') {
+    settings.storeName = 'Sweet2Kaaram';
+    changed = true;
+  }
+  if (settings.tagline === 'Authentic regional Indian delicacies') {
+    settings.tagline = 'The Soul of Native Taste';
+    changed = true;
+  }
+  if (changed) await settings.save();
+  return settings;
 }
 
 export function publicSettings(s: any) {

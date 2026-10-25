@@ -21,6 +21,7 @@ const quoteView = (q: Awaited<ReturnType<typeof buildQuote>>) => ({
   subtotal: q.subtotal,
   discount: q.discount,
   shippingFee: q.shippingFee,
+  shippingThreshold: q.shippingThreshold,
   total: q.total,
   couponCode: q.coupon?.code ?? '',
   couponError: q.couponError,
@@ -29,7 +30,11 @@ const quoteView = (q: Awaited<ReturnType<typeof buildQuote>>) => ({
 
 /** Public: lets the cart and checkout show trusted totals and test a coupon. */
 r.post('/quote', ah(async (req, res) => {
-  const body = parse(z.object({ items: itemsSchema, couponCode: z.string().trim().max(24).optional() }), req.body);
+  const body = parse(z.object({
+    items: itemsSchema,
+    couponCode: z.string().trim().max(24).optional(),
+    deliveryState: z.string().trim().max(60).optional(),
+  }), req.body);
   res.json(quoteView(await buildQuote(body)));
 }));
 
@@ -49,13 +54,17 @@ r.post('/', ah(async (req, res) => {
   const user = req.user;
   const address = user.addresses.id(body.addressId);
   if (!address) throw new HttpError(400, 'Please choose a delivery address');
+  if (!address.state?.trim() || !/^\d{6}$/.test(address.pincode)) {
+    throw new HttpError(400, 'Please provide a valid delivery state and 6-digit pincode');
+  }
 
-  const q = await buildQuote(body);
+  const q = await buildQuote({ ...body, deliveryState: address.state });
   if (!q.settings.isAcceptingOrders) throw new HttpError(503, q.settings.pausedMessage);
   if (body.paymentMethod === 'COD' && !q.settings.codEnabled) throw new HttpError(400, 'Cash on delivery is not available right now');
   if (body.paymentMethod === 'ONLINE' && !q.settings.onlinePaymentEnabled) throw new HttpError(400, 'Online payment is not available yet');
   if (q.problems.length) throw new HttpError(409, q.problems[0]);
   if (body.couponCode && q.couponError) throw new HttpError(400, q.couponError);
+  if (q.shippingFee === null || q.total === null) throw new HttpError(400, 'Please choose a valid delivery address');
 
   await reserveStock(q.lines);
   const items = q.lines.map((l) => ({

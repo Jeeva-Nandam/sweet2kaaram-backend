@@ -30,7 +30,7 @@ app.use(
 );
 app.use(express.json({ limit: '100kb' }));
 
-const health = (_req: express.Request, res: express.Response) => res.json({ ok: true, service: 'miras-heritage-api' });
+const health = (_req: express.Request, res: express.Response) => res.json({ ok: true, service: 'sweet2kaaram-api' });
 app.get('/', health);
 app.get('/api', health);
 app.get('/api/health', health);

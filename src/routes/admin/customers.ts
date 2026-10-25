@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Order } from '../../models/Order';
 import { User } from '../../models/User';
-import { ah, escapeRegex } from '../../utils/http';
+import { HttpError, ah, escapeRegex, objectId } from '../../utils/http';
 
 const r = Router();
 
@@ -38,6 +38,15 @@ r.get('/', ah(async (req, res) => {
       };
     })
   );
+}));
+
+r.delete('/:id', ah(async (req, res) => {
+  const id = objectId(req.params.id, 'Customer');
+  const customer = await User.findById(id);
+  if (!customer) throw new HttpError(404, 'Customer not found');
+  const orders = await Order.deleteMany({ user: id });
+  await customer.deleteOne();
+  res.json({ deleted: true, deletedOrders: orders.deletedCount });
 }));
 
 export default r;

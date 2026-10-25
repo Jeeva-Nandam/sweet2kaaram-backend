@@ -1,8 +1,8 @@
 {
-  "name": "miras-heritage-backend",
+  "name": "sweet2kaaram-backend",
   "version": "2.0.0",
   "private": true,
-  "description": "Miras Heritage Foods - REST API (Express + MongoDB). Deploy as its own Vercel project.",
+  "description": "Sweet2Kaaram - REST API (Express + MongoDB). Deploy as its own Vercel project.",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
