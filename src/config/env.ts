@@ -10,6 +10,11 @@ export const env = {
   googleClientId: get('GOOGLE_CLIENT_ID'),
   adminEmail: get('ADMIN_EMAIL').toLowerCase(),
   adminPasswordHash: get('ADMIN_PASSWORD_HASH'),
+  razorpay: {
+    keyId: get('RAZORPAY_KEY_ID'),
+    keySecret: get('RAZORPAY_KEY_SECRET'),
+    webhookSecret: get('RAZORPAY_WEBHOOK_SECRET'),
+  },
   frontendUrls: get('FRONTEND_URL')
     .split(',')
     .map((s) => s.trim().replace(/\/$/, ''))

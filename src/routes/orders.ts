@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env';
 import { requireCustomer } from '../middleware/auth';
 import { Order, nextOrderNumber } from '../models/Order';
 import { Coupon } from '../models/Coupon';
 import { buildQuote, releaseStock, reserveStock } from '../services/pricing';
+import { confirmRazorpayPayment, createRazorpayOrder, isRazorpayConfigured, verifyRazorpaySignature } from '../services/razorpay';
 import { HttpError, ah, objectId, parse } from '../utils/http';
 
 const r = Router();
@@ -12,6 +14,14 @@ const itemsSchema = z
   .array(z.object({ productId: z.string(), quantity: z.coerce.number().int().min(1).max(20) }))
   .min(1, 'Your cart is empty')
   .max(40);
+
+const checkoutSchema = z.object({
+  items: itemsSchema,
+  addressId: z.string(),
+  paymentMethod: z.enum(['COD', 'ONLINE']).default('COD'),
+  couponCode: z.string().trim().max(24).optional(),
+  customerNote: z.string().trim().max(300).default(''),
+});
 
 const quoteView = (q: Awaited<ReturnType<typeof buildQuote>>) => ({
   lines: q.lines.map((l) => ({
@@ -41,16 +51,7 @@ r.post('/quote', ah(async (req, res) => {
 r.use(requireCustomer);
 
 r.post('/', ah(async (req, res) => {
-  const body = parse(
-    z.object({
-      items: itemsSchema,
-      addressId: z.string(),
-      paymentMethod: z.enum(['COD', 'ONLINE']).default('COD'),
-      couponCode: z.string().trim().max(24).optional(),
-      customerNote: z.string().trim().max(300).default(''),
-    }),
-    req.body
-  );
+  const body = parse(checkoutSchema, req.body);
   const user = req.user;
   const address = user.addresses.id(body.addressId);
   if (!address) throw new HttpError(400, 'Please choose a delivery address');
@@ -62,6 +63,9 @@ r.post('/', ah(async (req, res) => {
   if (!q.settings.isAcceptingOrders) throw new HttpError(503, q.settings.pausedMessage);
   if (body.paymentMethod === 'COD' && !q.settings.codEnabled) throw new HttpError(400, 'Cash on delivery is not available right now');
   if (body.paymentMethod === 'ONLINE' && !q.settings.onlinePaymentEnabled) throw new HttpError(400, 'Online payment is not available yet');
+  if (body.paymentMethod === 'ONLINE' && !isRazorpayConfigured()) {
+    throw new HttpError(503, 'Online payments are not configured yet. Please choose cash on delivery or try again later');
+  }
   if (q.problems.length) throw new HttpError(409, q.problems[0]);
   if (body.couponCode && q.couponError) throw new HttpError(400, q.couponError);
   if (q.shippingFee === null || q.total === null) throw new HttpError(400, 'Please choose a valid delivery address');
@@ -72,36 +76,114 @@ r.post('/', ah(async (req, res) => {
     image: l.product.image, price: l.product.price, quantity: l.quantity,
   }));
 
-  try {
-    if (q.coupon) {
-      const ok = await Coupon.updateOne(
-        { _id: q.coupon._id, isActive: true, $or: [{ usageLimit: 0 }, { $expr: { $lt: ['$timesUsed', '$usageLimit'] } }] },
-        { $inc: { timesUsed: 1 } }
-      );
-      if (ok.modifiedCount !== 1) throw new HttpError(409, 'This coupon has just been fully redeemed');
+  let couponReserved = false;
+  const reserveCoupon = async () => {
+    if (!q.coupon) return;
+    const ok = await Coupon.updateOne(
+      { _id: q.coupon._id, isActive: true, $or: [{ usageLimit: 0 }, { $expr: { $lt: ['$timesUsed', '$usageLimit'] } }] },
+      { $inc: { timesUsed: 1 } }
+    );
+    if (ok.modifiedCount !== 1) throw new HttpError(409, 'This coupon has just been fully redeemed');
+    couponReserved = true;
+  };
+  const releaseCoupon = async () => {
+    if (couponReserved && q.coupon) {
+      await Coupon.updateOne({ _id: q.coupon._id, timesUsed: { $gt: 0 } }, { $inc: { timesUsed: -1 } });
+      couponReserved = false;
     }
-    const order = await Order.create({
-      orderNumber: await nextOrderNumber(),
-      user: user._id,
+  };
+  const createOrder = (orderNumber: string, razorpayOrderId = '') => Order.create({
+    orderNumber,
+    user: user._id,
+    customerName: address.name,
+    customerEmail: user.email,
+    customerPhone: address.phone,
+    address: address.toObject(),
+    items,
+    subtotal: q.subtotal,
+    discount: q.discount,
+    couponCode: q.coupon?.code ?? '',
+    shippingFee: q.shippingFee,
+    total: q.total,
+    paymentMethod: body.paymentMethod,
+    razorpayOrderId,
+    customerNote: body.customerNote,
+    statusHistory: [{ status: 'PLACED', note: 'Order placed' }],
+  });
+
+  try {
+    await reserveCoupon();
+    const orderNumber = await nextOrderNumber();
+    if (body.paymentMethod === 'COD') {
+      const order = await createOrder(orderNumber);
+      res.status(201).json(order);
+      return;
+    }
+
+    const amount = Math.round(q.total * 100);
+    const gatewayOrder = await createRazorpayOrder(amount, orderNumber);
+    if (gatewayOrder.amount !== amount || gatewayOrder.currency !== 'INR') {
+      throw new HttpError(502, 'Razorpay returned an unexpected payment amount');
+    }
+    const order = await createOrder(orderNumber, gatewayOrder.id);
+    res.status(201).json({
+      orderId: String(order._id),
+      keyId: env.razorpay.keyId,
+      razorpayOrderId: gatewayOrder.id,
+      amount,
+      currency: 'INR',
+      storeName: q.settings.storeName,
       customerName: address.name,
       customerEmail: user.email,
       customerPhone: address.phone,
-      address: address.toObject(),
-      items,
-      subtotal: q.subtotal,
-      discount: q.discount,
-      couponCode: q.coupon?.code ?? '',
-      shippingFee: q.shippingFee,
-      total: q.total,
-      paymentMethod: body.paymentMethod,
-      customerNote: body.customerNote,
-      statusHistory: [{ status: 'PLACED', note: 'Order placed' }],
     });
-    res.status(201).json(order);
   } catch (e) {
     await releaseStock(items);
+    await releaseCoupon();
     throw e;
   }
+}));
+
+r.post('/mine/:id/payment/verify', ah(async (req, res) => {
+  const body = parse(z.object({
+    razorpay_order_id: z.string().min(1).max(100),
+    razorpay_payment_id: z.string().min(1).max(100),
+    razorpay_signature: z.string().min(1).max(200),
+  }), req.body);
+  const order = await Order.findOne({ _id: objectId(req.params.id, 'Order'), user: req.user._id });
+  if (!order) throw new HttpError(404, 'Order not found');
+  if (order.paymentMethod !== 'ONLINE' || !order.razorpayOrderId) throw new HttpError(400, 'This order does not have an online payment');
+  if (order.paymentStatus === 'PAID' && order.razorpayPaymentId === body.razorpay_payment_id) {
+    res.json(order);
+    return;
+  }
+  if (order.paymentStatus !== 'PENDING' || order.status === 'CANCELLED') {
+    throw new HttpError(409, 'This order is no longer waiting for payment');
+  }
+  if (body.razorpay_order_id !== order.razorpayOrderId
+    || !verifyRazorpaySignature(body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature)) {
+    throw new HttpError(400, 'Razorpay payment verification failed');
+  }
+
+  await confirmRazorpayPayment(
+    body.razorpay_payment_id,
+    order.razorpayOrderId,
+    Math.round(order.total * 100)
+  );
+  const paid = await Order.findOneAndUpdate(
+    { _id: order._id, user: req.user._id, paymentStatus: 'PENDING', status: { $ne: 'CANCELLED' } },
+    { $set: { paymentStatus: 'PAID', razorpayPaymentId: body.razorpay_payment_id } },
+    { new: true }
+  );
+  if (!paid) {
+    const latest = await Order.findOne({ _id: order._id, user: req.user._id });
+    if (latest?.paymentStatus === 'PAID' && latest.razorpayPaymentId === body.razorpay_payment_id) {
+      res.json(latest);
+      return;
+    }
+    throw new HttpError(409, 'The payment was received but this order needs support. Please contact us with your order number');
+  }
+  res.json(paid);
 }));
 
 r.get('/mine', ah(async (req, res) => {
@@ -122,14 +204,20 @@ r.get('/track/:orderNumber', ah(async (req, res) => {
 
 r.post('/mine/:id/cancel', ah(async (req, res) => {
   const o = await Order.findOneAndUpdate(
-    { _id: objectId(req.params.id, 'Order'), user: req.user._id, status: { $in: ['PLACED', 'CONFIRMED'] }, stockRestored: false },
+    {
+      _id: objectId(req.params.id, 'Order'),
+      user: req.user._id,
+      paymentMethod: 'COD',
+      status: { $in: ['PLACED', 'CONFIRMED'] },
+      stockRestored: false,
+    },
     {
       $set: { status: 'CANCELLED', stockRestored: true },
       $push: { statusHistory: { status: 'CANCELLED', note: 'Cancelled by customer', at: new Date() } },
     },
     { new: true }
   );
-  if (!o) throw new HttpError(400, 'This order can no longer be cancelled. It may already be preparing or shipped');
+  if (!o) throw new HttpError(400, 'This order can no longer be cancelled here. Online orders need to be cancelled through customer support');
   await releaseStock(o.items as any);
   res.json(o);
 }));

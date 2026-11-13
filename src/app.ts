@@ -10,6 +10,7 @@ import auth from './routes/auth';
 import catalog from './routes/catalog';
 import me from './routes/me';
 import orders from './routes/orders';
+import webhooks from './routes/webhooks';
 import admin from './routes/admin';
 
 const app = express();
@@ -28,7 +29,12 @@ app.use(
     maxAge: 86400,
   })
 );
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({
+  limit: '100kb',
+  verify(req, _res, buf) {
+    (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+  },
+}));
 
 const health = (_req: express.Request, res: express.Response) => res.json({ ok: true, service: 'sweet2kaaram-api' });
 app.get('/', health);
@@ -42,6 +48,7 @@ app.use('/api/auth', strict);
 
 app.use('/api', ah(async (_req, _res, next) => { await connectDB(); next(); }));
 
+app.use('/api/webhooks/razorpay', webhooks);
 app.use('/api/auth', auth);
 app.use('/api/me', me);
 app.use('/api/orders', orders);

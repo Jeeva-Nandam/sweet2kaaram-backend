@@ -52,6 +52,8 @@ const orderSchema = new Schema(
     total: { type: Number, required: true },
     paymentMethod: { type: String, enum: ['COD', 'ONLINE'], default: 'COD' },
     paymentStatus: { type: String, enum: ['PENDING', 'PAID', 'FAILED', 'REFUNDED'], default: 'PENDING' },
+    razorpayOrderId: { type: String, default: '' },
+    razorpayPaymentId: { type: String, default: '' },
     status: { type: String, enum: ORDER_STATUSES, default: 'PLACED', index: true },
     statusHistory: { type: [historySchema], default: [] },
     tracking: {

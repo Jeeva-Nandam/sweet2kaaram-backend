@@ -2,12 +2,14 @@ import { Router } from 'express';
 import { Category } from '../models/Category';
 import { Product } from '../models/Product';
 import { getSettings, publicSettings } from '../models/Setting';
+import { isRazorpayConfigured } from '../services/razorpay';
 import { ah, escapeRegex, objectId, paging, HttpError } from '../utils/http';
 
 const r = Router();
 
 r.get('/settings', ah(async (_req, res) => {
-  res.json(publicSettings(await getSettings()));
+  const settings = publicSettings(await getSettings());
+  res.json({ ...settings, onlinePaymentEnabled: settings.onlinePaymentEnabled === true && isRazorpayConfigured() });
 }));
 
 r.get('/categories', ah(async (_req, res) => {

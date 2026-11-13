@@ -49,6 +49,9 @@ r.patch('/:id', ah(async (req, res) => {
   if (d.trackingNumber !== undefined) o.set('tracking.trackingNumber', d.trackingNumber);
   if (d.trackingUrl !== undefined) o.set('tracking.trackingUrl', d.trackingUrl);
   if (d.estimatedDelivery !== undefined) o.set('tracking.estimatedDelivery', d.estimatedDelivery ? new Date(d.estimatedDelivery) : null);
+  if (d.status === 'CANCELLED' && o.paymentMethod === 'ONLINE' && o.paymentStatus === 'PENDING') {
+    throw new HttpError(400, 'This online payment is still pending. Verify or resolve the payment before cancelling the order');
+  }
   if (d.paymentStatus) o.paymentStatus = d.paymentStatus;
 
   if (d.status && d.status !== o.status) {
