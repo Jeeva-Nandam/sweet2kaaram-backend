@@ -9,6 +9,7 @@ import { confirmRazorpayPayment, createRazorpayOrder, isRazorpayConfigured, veri
 import { HttpError, ah, objectId, parse } from '../utils/http';
 
 const r = Router();
+const MENTORING_THRESHOLD = 3000;
 
 const itemsSchema = z
   .array(z.object({ productId: z.string(), quantity: z.coerce.number().int().min(1).max(20) }))
@@ -102,6 +103,7 @@ r.post('/', ah(async (req, res) => {
     items,
     subtotal: q.subtotal,
     discount: q.discount,
+    mentoringEligible: q.subtotal - q.discount >= MENTORING_THRESHOLD,
     couponCode: q.coupon?.code ?? '',
     shippingFee: q.shippingFee,
     total: q.total,

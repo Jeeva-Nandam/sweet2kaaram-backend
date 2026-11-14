@@ -10,12 +10,25 @@ const r = Router();
 r.get('/', ah(async (req, res) => {
   const { page, limit, skip } = paging(req.query, 20, 100);
   const f: Record<string, any> = {};
+  const and: Record<string, any>[] = [];
   const st = String(req.query.status ?? '');
   if ((ORDER_STATUSES as readonly string[]).includes(st)) f.status = st;
+  if (String(req.query.mentoring ?? '') === 'pending') {
+    f.mentoringEligible = true;
+    f.mentoringProvided = false;
+    and.push({ status: { $ne: 'CANCELLED' } });
+    and.push({
+      $or: [
+        { paymentMethod: 'ONLINE', paymentStatus: 'PAID' },
+        { paymentMethod: 'COD', status: 'DELIVERED', paymentStatus: 'PAID' },
+      ],
+    });
+  }
   if (typeof req.query.q === 'string' && req.query.q.trim()) {
     const rx = new RegExp(escapeRegex(req.query.q.trim().slice(0, 60)), 'i');
-    f.$or = [{ orderNumber: rx }, { customerName: rx }, { customerPhone: rx }, { customerEmail: rx }];
+    and.push({ $or: [{ orderNumber: rx }, { customerName: rx }, { customerPhone: rx }, { customerEmail: rx }] });
   }
+  if (and.length) f.$and = and;
   const [items, total] = await Promise.all([
     Order.find(f).sort({ createdAt: -1 }).skip(skip).limit(limit),
     Order.countDocuments(f),
@@ -37,6 +50,7 @@ const patch = z.object({
   trackingUrl: httpsUrl.optional(),
   estimatedDelivery: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}/), z.literal(''), z.null()]).optional(),
   paymentStatus: z.enum(['PENDING', 'PAID', 'FAILED', 'REFUNDED']).optional(),
+  mentoringProvided: z.boolean().optional(),
 });
 
 /** One endpoint for status moves and tracking details; every status change is logged with a time. */
@@ -52,7 +66,19 @@ r.patch('/:id', ah(async (req, res) => {
   if (d.status === 'CANCELLED' && o.paymentMethod === 'ONLINE' && o.paymentStatus === 'PENDING') {
     throw new HttpError(400, 'This online payment is still pending. Verify or resolve the payment before cancelling the order');
   }
+  const nextStatus = d.status ?? o.status;
+  const nextPaymentStatus = d.paymentStatus
+    ?? (nextStatus === 'DELIVERED' && o.paymentMethod === 'COD' ? 'PAID' : o.paymentStatus);
+  if (d.mentoringProvided === true && (
+    !o.mentoringEligible
+    || nextStatus === 'CANCELLED'
+    || nextPaymentStatus !== 'PAID'
+    || (o.paymentMethod === 'COD' && nextStatus !== 'DELIVERED')
+  )) {
+    throw new HttpError(400, 'This mentoring benefit can only be marked provided for an eligible, completed order');
+  }
   if (d.paymentStatus) o.paymentStatus = d.paymentStatus;
+  if (d.mentoringProvided !== undefined) o.mentoringProvided = d.mentoringProvided;
 
   if (d.status && d.status !== o.status) {
     if (o.status === 'DELIVERED' || o.status === 'CANCELLED') throw new HttpError(400, 'This order is already closed');

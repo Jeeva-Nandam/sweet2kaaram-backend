@@ -47,6 +47,8 @@ const orderSchema = new Schema(
     items: { type: [itemSchema], required: true },
     subtotal: { type: Number, required: true },
     discount: { type: Number, default: 0 },
+    mentoringEligible: { type: Boolean, default: false },
+    mentoringProvided: { type: Boolean, default: false },
     couponCode: { type: String, default: '' },
     shippingFee: { type: Number, default: 0 },
     total: { type: Number, required: true },
